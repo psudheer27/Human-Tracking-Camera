@@ -33,12 +33,10 @@
 #endif
 #endif
 
-// ---------------- Added: OLED / Joystick / Servo ----------------
 #include "PmodOLED.h"
 #include "PmodJSTK2.h"
 #include "xgpio.h"
 
-// ---------------- Servo + Joystick ----------------
 #define SERVO_GPIO_DEVICE_ID   XPAR_AXI_GPIO_0_DEVICE_ID
 #define SERVO_GPIO_CHANNEL     1
 
@@ -49,31 +47,24 @@
 #define SERVO_MIN_PULSE_US     1000
 #define SERVO_MAX_PULSE_US     2000
 
-// ---------------- OLED ----------------
 static PmodOLED  myDevice;
 static PmodJSTK2 joystick;
 static XGpio     ServoGpio;
 
-// Match your working demo constants
 static const u8 orientation = 0x0;
 static const u8 invert      = 0x0;
 
-// ---------------- TCP command shared with echo.c ----------------
 #define RX_LINE_MAX 32
-volatile char g_tcp_cmd[RX_LINE_MAX] = "none";   // last complete line from TCP
-volatile int  g_tcp_cmd_updated = 1;             // flag for debugging/optional
+volatile char g_tcp_cmd[RX_LINE_MAX] = "none";   
+volatile int  g_tcp_cmd_updated = 1;             
 
-// ---------------- Control mode ----------------
 typedef enum { MODE_MANUAL = 0, MODE_TRACKING = 1 } ControlMode;
 static ControlMode g_mode = MODE_MANUAL;
 
-// Tracking parameters
 static float g_servo_angle = 90.0f;
-static const float TRACK_STEP_DEG = 0.5f;   // degrees per 20ms loop (~100 deg/s)
+static const float TRACK_STEP_DEG = 0.5f;   
 
-// ------------------------------------------------------------
-// Template externs/timers/hooks (implemented in echo.c)
-// ------------------------------------------------------------
+
 void tcp_fasttmr(void);
 void tcp_slowtmr(void);
 void lwip_init();
@@ -95,9 +86,7 @@ extern volatile int TcpSlowTmrFlag;
 static struct netif server_netif;
 struct netif *echo_netif;
 
-// ============================================================
-// Helpers
-// ============================================================
+
 static void OLED_ShowMode(ControlMode m)
 {
     OLED_ClearBuffer(&myDevice);
@@ -112,7 +101,6 @@ static void OLED_ShowMode(ControlMode m)
     OLED_Update(&myDevice);
 }
 
-// (Optional debug helper if you ever want it again)
 void OLED_Show(const char *rx)
 {
     OLED_ClearBuffer(&myDevice);
@@ -150,9 +138,7 @@ static int starts_with(const char *s, const char *prefix)
     return 1;
 }
 
-// ============================================================
-// IP print helpers from template
-// ============================================================
+
 #if LWIP_IPV6==1
 void print_ip6(char *msg, ip_addr_t *ip)
 {
@@ -183,16 +169,13 @@ void print_ip_settings(ip_addr_t *ip, ip_addr_t *mask, ip_addr_t *gw)
 }
 #endif
 
-// ============================================================
-// main
-// ============================================================
+
 int main()
 {
 #if LWIP_IPV6==0
     ip_addr_t ipaddr, netmask, gw;
 #endif
 
-    // Unique MAC per board (edit last byte if you use multiple boards)
     unsigned char mac_ethernet_address[] =
     { 0x00, 0x0a, 0x35, 0x00, 0x01, 0x02 };
 
@@ -200,34 +183,29 @@ int main()
 
     init_platform();
 
-    // ---------- OLED init (known-good style) ----------
     OLED_Begin(&myDevice,
         XPAR_PMODOLED_0_AXI_LITE_GPIO_BASEADDR,
         XPAR_PMODOLED_0_AXI_LITE_SPI_BASEADDR,
         orientation, invert);
     OLED_SetCharUpdate(&myDevice, 0);
 
-    // start in MANUAL mode
     OLED_ShowMode(g_mode);
 
-    // ---------- Servo GPIO init ----------
     if (XGpio_Initialize(&ServoGpio, SERVO_GPIO_DEVICE_ID) != XST_SUCCESS) {
         OLED_Show("Servo GPIO fail");
         return -1;
     }
     XGpio_SetDataDirection(&ServoGpio, SERVO_GPIO_CHANNEL, 0x0);
 
-    // ---------- Joystick init ----------
     JSTK2_begin(&joystick, JSTK2_SPI_BASEADDR, JSTK2_GPIO_BASEADDR);
 
 #if LWIP_IPV6==0
 #if LWIP_DHCP==1
     ipaddr.addr = 0; gw.addr = 0; netmask.addr = 0;
 #else
-    // Example network (change to match your PC-side interface IP/subnet)
-    IP4_ADDR(&ipaddr,  192, 168, 10, 50);   // board
+    IP4_ADDR(&ipaddr,  192, 168, 10, 50);   
     IP4_ADDR(&netmask, 255, 255, 255, 0);
-    IP4_ADDR(&gw,      192, 168, 10, 1);    // host (if you’re using one)
+    IP4_ADDR(&gw,      192, 168, 10, 1);    
 #endif
 #endif
 
@@ -290,38 +268,31 @@ int main()
         return -1;
     }
 
-    // Trigger edge detect (NOTE: field name may differ; see comment below)
     u8 prev_trigger = 0;
 
     while (1) {
         if (TcpFastTmrFlag) { tcp_fasttmr(); TcpFastTmrFlag = 0; }
         if (TcpSlowTmrFlag) { tcp_slowtmr(); TcpSlowTmrFlag = 0; }
 
-        // pump lwIP
         xemacif_input(echo_netif);
         transfer_data();
 
-        // read joystick
         JSTK2_DataPacket pkt = JSTK2_getDataPacket(&joystick);
 
-        // ---- trigger button (YOU MAY NEED TO ADJUST THIS LINE) ----
-        // Some Digilent JSTK2 drivers use pkt.Buttons, others pkt.Btns.
+     
         u8 trigger = 0;
-        trigger = pkt.Trigger;  // <-- if compile error: change Buttons -> Btns
-        // rising edge toggles modes
+        trigger = pkt.Trigger; 
+     
         if (trigger && !prev_trigger) {
             g_mode = (g_mode == MODE_MANUAL) ? MODE_TRACKING : MODE_MANUAL;
             OLED_ShowMode(g_mode);
         }
         prev_trigger = trigger;
 
-        // ---- servo control depending on mode ----
         if (g_mode == MODE_MANUAL) {
-            // joystick X -> angle
             g_servo_angle = ((float)pkt.XData / 1023.0f) * 180.0f;
         } else {
-            // tracking: TCP command drives continuous stepping
-            // echo.c normalizes to lowercase trimmed commands: left/right/none
+            
             if (starts_with((const char*)g_tcp_cmd, "right")) {
                 g_servo_angle -= TRACK_STEP_DEG;
             } else if (starts_with((const char*)g_tcp_cmd, "left")) {
@@ -332,7 +303,6 @@ int main()
             }
         }
 
-        // clamp and output one PWM period
         if (g_servo_angle < 0.0f)   g_servo_angle = 0.0f;
         if (g_servo_angle > 180.0f) g_servo_angle = 180.0f;
 
